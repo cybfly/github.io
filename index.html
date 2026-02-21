@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鼠标躲避障碍物游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft Yahei", sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+        
+        .game-container {
+            position: relative;
+            border: 2px solid #444;
+            background-color: #000;
+            box-shadow: 0 0 20px rgba(0, 183, 255, 0.3);
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        .score-panel {
+            margin-bottom: 10px;
+            font-size: 24px;
+            display: flex;
+            gap: 30px;
+        }
+        
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 30px 50px;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .game-over h2 {
+            color: #ff4444;
+            font-size: 36px;
+            margin-bottom: 15px;
+        }
+        
+        .game-over p {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            font-size: 18px;
+            background-color: #0099ff;
+            border: none;
+            border-radius: 5px;
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .btn:hover {
+            background-color: #0077cc;
+        }
+        
+        .instructions {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #999;
+            text-align: center;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+    <div class="score-panel">
+        <div>分数: <span id="score">0</span></div>
+        <div>最高分数: <span id="high-score">0</span></div>
+    </div>
+    
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="game-over" id="gameOverPanel">
+            <h2>游戏结束</h2>
+            <p>最终分数: <span id="final-score">0</span></p>
+            <button class="btn" id="restartBtn">重新开始</button>
+        </div>
+    </div>
+    
+    <div class="instructions">
+        <p>游戏规则：移动鼠标控制蓝色方块，躲避红色障碍物 | 每存活1秒加1分 | 撞到障碍物游戏结束</p>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('high-score');
+        const gameOverPanel = document.getElementById('gameOverPanel');
+        const finalScoreElement = document.getElementById('final-score');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // 游戏参数
+        const gameParams = {
+            player: {
+                x: canvas.width / 2 - 20,
+                y: canvas.height / 2 - 20,
+                width: 40,
+                height: 40,
+                color: '#0099ff',
+                speed: 5
+            },
+            obstacles: [],
+            obstacleSpeed: 3,
+            obstacleSpawnRate: 80, // 数值越小生成越快
+            score: 0,
+            highScore: localStorage.getItem('obstacleGameHighScore') || 0,
+            gameRunning: false,
+            frameCount: 0
+        };
+
+        // 初始化最高分数
+        highScoreElement.textContent = gameParams.highScore;
+
+        // 玩家对象
+        class Player {
+            constructor(x, y, width, height, color) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+            }
+
+            // 绘制玩家
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                // 绘制边框
+                ctx.strokeStyle = '#fff';
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+
+            // 更新玩家位置（跟随鼠标）
+            update(mouseX, mouseY) {
+                // 限制玩家在画布内
+                this.x = Math.max(0, Math.min(mouseX - this.width/2, canvas.width - this.width));
+                this.y = Math.max(0, Math.min(mouseY - this.height/2, canvas.height - this.height));
+            }
+
+            // 碰撞检测
+            checkCollision(obstacle) {
+                return (
+                    this.x < obstacle.x + obstacle.width &&
+                    this.x + this.width > obstacle.x &&
+                    this.y < obstacle.y + obstacle.height &&
+                    this.y + this.height > obstacle.y
+                );
+            }
+        }
+
+        // 障碍物对象
+        class Obstacle {
+            constructor() {
+                // 随机大小
+                this.width = Math.random() * 40 + 20;
+                this.height = Math.random() * 40 + 20;
+                
+                // 随机生成位置（从画布边缘生成）
+                const side = Math.floor(Math.random() * 4);
+                switch(side) {
+                    case 0: // 上
+                        this.x = Math.random() * (canvas.width - this.width);
+                        this.y = -this.height;
+                        break;
+                    case 1: // 右
+                        this.x = canvas.width;
+                        this.y = Math.random() * (canvas.height - this.height);
+                        break;
+                    case 2: // 下
+                        this.x = Math.random() * (canvas.width - this.width);
+                        this.y = canvas.height;
+                        break;
+                    case 3: // 左
+                        this.x = -this.width;
+                        this.y = Math.random() * (canvas.height - this.height);
+                        break;
+                }
+
+                // 随机颜色（红色系）
+                this.color = `rgb(${200 + Math.random()*55}, ${Math.random()*100}, ${Math.random()*100})`;
+                
+                // 计算移动方向（朝向画布中心）
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const dx = centerX - this.x;
+                const dy = centerY - this.y;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                this.vx = (dx / distance) * gameParams.obstacleSpeed;
+                this.vy = (dy / distance) * gameParams.obstacleSpeed;
+            }
+
+            // 绘制障碍物
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+
+            // 更新位置
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            // 判断是否超出画布
+            isOutOfBounds() {
+                return (
+                    this.x < -100 ||
+                    this.x > canvas.width + 100 ||
+                    this.y < -100 ||
+                    this.y > canvas.height + 100
+                );
+            }
+        }
+
+        // 初始化游戏
+        let player;
+        function initGame() {
+            // 重置游戏状态
+            gameParams.obstacles = [];
+            gameParams.score = 0;
+            gameParams.gameRunning = true;
+            gameParams.frameCount = 0;
+            scoreElement.textContent = 0;
+            gameOverPanel.style.display = 'none';
+
+            // 创建玩家
+            player = new Player(
+                gameParams.player.x,
+                gameParams.player.y,
+                gameParams.player.width,
+                gameParams.player.height,
+                gameParams.player.color
+            );
+
+            // 开始游戏循环
+            gameLoop();
+        }
+
+        // 游戏循环
+        function gameLoop() {
+            if (!gameParams.gameRunning) return;
+
+            // 清空画布
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 更新帧数
+            gameParams.frameCount++;
+
+            // 每隔一定帧数生成障碍物
+            if (gameParams.frameCount % gameParams.obstacleSpawnRate === 0) {
+                gameParams.obstacles.push(new Obstacle());
+                // 难度递增：每生成10个障碍物，速度略微提升
+                if (gameParams.obstacles.length % 10 === 0) {
+                    gameParams.obstacleSpeed *= 1.05;
+                    gameParams.obstacleSpawnRate = Math.max(40, gameParams.obstacleSpawnRate - 2);
+                }
+            }
+
+            // 更新并绘制障碍物
+            for (let i = gameParams.obstacles.length - 1; i >= 0; i--) {
+                const obs = gameParams.obstacles[i];
+                obs.update();
+                obs.draw();
+
+                // 检测碰撞
+                if (player.checkCollision(obs)) {
+                    gameOver();
+                    return;
+                }
+
+                // 移除超出画布的障碍物
+                if (obs.isOutOfBounds()) {
+                    gameParams.obstacles.splice(i, 1);
+                }
+            }
+
+            // 更新并绘制玩家
+            player.draw();
+
+            // 更新分数（每帧加0.01分，约1秒加1分）
+            gameParams.score = Math.floor(gameParams.frameCount * 0.01);
+            scoreElement.textContent = gameParams.score;
+
+            // 继续循环
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 游戏结束处理
+        function gameOver() {
+            gameParams.gameRunning = false;
+            finalScoreElement.textContent = gameParams.score;
+            
+            // 更新最高分数
+            if (gameParams.score > gameParams.highScore) {
+                gameParams.highScore = gameParams.score;
+                localStorage.setItem('obstacleGameHighScore', gameParams.highScore);
+                highScoreElement.textContent = gameParams.highScore;
+            }
+
+            // 显示游戏结束面板
+            gameOverPanel.style.display = 'block';
+        }
+
+        // 鼠标移动事件（控制玩家）
+        canvas.addEventListener('mousemove', (e) => {
+            if (!gameParams.gameRunning) return;
+            
+            // 获取鼠标在画布内的坐标
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            player.update(mouseX, mouseY);
+        });
+
+        // 重新开始按钮
+        restartBtn.addEventListener('click', initGame);
+
+        // 初始化游戏
+        initGame();
+    </script>
+</body>
+</html>
