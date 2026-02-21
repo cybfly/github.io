@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>English Word Whack-a-Mole</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft Yahei", sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+        
+        .game-container {
+            position: relative;
+            border: 2px solid #4fc3f7;
+            background-color: #000;
+            box-shadow: 0 0 20px rgba(79, 195, 247, 0.3);
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        .score-panel {
+            margin-bottom: 10px;
+            font-size: 24px;
+            display: flex;
+            gap: 30px;
+            color: #4fc3f7;
+        }
+        
+        .word-question {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 32px;
+            font-weight: bold;
+            color: #fff;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 200px;
+        }
+        
+        .grid-cell {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: rgba(0, 122, 255, 0.3);
+            border: 2px solid #4fc3f7;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 28px;
+            color: #fff;
+            transition: all 0.2s ease;
+        }
+        
+        .grid-cell:hover {
+            background-color: rgba(0, 122, 255, 0.5);
+        }
+        
+        .grid-cell.correct {
+            background-color: rgba(76, 209, 55, 0.7);
+            border-color: #4cd964;
+        }
+        
+        .grid-cell.wrong {
+            background-color: rgba(255, 59, 48, 0.7);
+            border-color: #ff3b30;
+        }
+        
+        .instructions {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #999;
+            text-align: center;
+            max-width: 600px;
+        }
+        
+        .restart-btn {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 18px;
+            background-color: #4fc3f7;
+            border: none;
+            border-radius: 5px;
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .restart-btn:hover {
+            background-color: #2196f3;
+        }
+    </style>
+</head>
+<body>
+    <div class="score-panel">
+        <div>Score: <span id="score">0</span></div>
+        <div>High Score: <span id="high-score">0</span></div>
+    </div>
+    
+    <div class="game-container" id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="word-question" id="wordQuestion">请点击：苹果</div>
+        <!-- 3x3格子会通过JS动态生成 -->
+    </div>
+    
+    <div class="instructions">
+        <p>Game Rules: Click the correct English word for the Chinese translation above | Correct +10 points | Wrong -5 points</p>
+        <button class="restart-btn" id="restartBtn">Restart Game</button>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('high-score');
+        const gameContainer = document.getElementById('gameContainer');
+        const wordQuestion = document.getElementById('wordQuestion');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // 图片资源（蓝天背景）
+        const bgImage = new Image();
+        bgImage.src = 'https://picsum.photos/id/1018/800/600'; // 蓝天背景
+
+        // 小学一年级英语单词库（中文翻译 -> 英文单词）
+        const wordBank = {
+            "苹果": "apple",
+            "香蕉": "banana",
+            "猫": "cat",
+            "狗": "dog",
+            "鸡蛋": "egg",
+            "鱼": "fish",
+            "门": "door",
+            "手": "hand",
+            "眼睛": "eye",
+            "鼻子": "nose",
+            "嘴巴": "mouth",
+            "耳朵": "ear",
+            "书": "book",
+            "笔": "pen",
+            "尺子": "ruler",
+            "书包": "bag",
+            "桌子": "desk",
+            "椅子": "chair",
+            "牛奶": "milk",
+            "水": "water"
+        };
+
+        // 游戏参数
+        const gameParams = {
+            score: 0,
+            highScore: localStorage.getItem('wordGameHighScore') || 0,
+            gameRunning: false,
+            imagesLoaded: false,
+            grid: {
+                rows: 3,
+                cols: 3,
+                cellWidth: 180,
+                cellHeight: 80,
+                startX: (canvas.width - 3 * 180) / 2,
+                startY: 120
+            },
+            currentWord: {
+                chinese: "",
+                english: ""
+            },
+            gridCells: [] // 存储3x3格子DOM元素
+        };
+
+        // 初始化最高分数
+        highScoreElement.textContent = gameParams.highScore;
+
+        // 图片加载检测
+        bgImage.onload = () => {
+            gameParams.imagesLoaded = true;
+            initGame();
+        };
+        // 图片加载失败降级
+        bgImage.onerror = () => {
+            bgImage.src = 'https://picsum.photos/800/600?sky';
+            gameParams.imagesLoaded = true;
+            initGame();
+        };
+
+        // 生成3x3格子
+        function createGrid() {
+            // 清空原有格子
+            gameParams.gridCells.forEach(cell => cell.remove());
+            gameParams.gridCells = [];
+
+            // 计算格子位置并创建
+            for (let row = 0; row < gameParams.grid.rows; row++) {
+                for (let col = 0; col < gameParams.grid.cols; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'grid-cell';
+                    cell.style.width = `${gameParams.grid.cellWidth}px`;
+                    cell.style.height = `${gameParams.grid.cellHeight}px`;
+                    cell.style.left = `${gameParams.grid.startX + col * (gameParams.grid.cellWidth + 20)}px`;
+                    cell.style.top = `${gameParams.grid.startY + row * (gameParams.grid.cellHeight + 20)}px`;
+                    
+                    // 绑定点击事件
+                    cell.addEventListener('click', () => handleCellClick(cell));
+                    
+                    gameContainer.appendChild(cell);
+                    gameParams.gridCells.push(cell);
+                }
+            }
+        }
+
+        // 随机选择当前目标单词
+        function selectRandomWord() {
+            // 从单词库中随机选一个
+            const chineseWords = Object.keys(wordBank);
+            const randomChinese = chineseWords[Math.floor(Math.random() * chineseWords.length)];
+            const englishWord = wordBank[randomChinese];
+
+            gameParams.currentWord.chinese = randomChinese;
+            gameParams.currentWord.english = englishWord;
+
+            // 更新顶部问题显示
+            wordQuestion.textContent = `请点击：${randomChinese}`;
+
+            // 生成3x3格子的单词列表（1个正确 + 8个错误）
+            fillGridWithWords(englishWord);
+        }
+
+        // 填充3x3格子的单词
+        function fillGridWithWords(correctWord) {
+            // 收集所有错误单词
+            const allEnglishWords = Object.values(wordBank);
+            const wrongWords = allEnglishWords.filter(word => word !== correctWord);
+            
+            // 随机选8个错误单词 + 1个正确单词
+            const shuffledWrongWords = wrongWords.sort(() => 0.5 - Math.random()).slice(0, 8);
+            const gridWords = [...shuffledWrongWords, correctWord];
+            
+            // 打乱顺序
+            const randomGridWords = gridWords.sort(() => 0.5 - Math.random());
+
+            // 填充到格子中
+            gameParams.gridCells.forEach((cell, index) => {
+                cell.textContent = randomGridWords[index];
+                cell.dataset.correct = randomGridWords[index] === correctWord;
+                // 重置格子样式
+                cell.classList.remove('correct', 'wrong');
+            });
+        }
+
+        // 处理格子点击事件
+        function handleCellClick(cell) {
+            if (!gameParams.gameRunning) return;
+
+            const isCorrect = cell.dataset.correct === 'true';
+            
+            if (isCorrect) {
+                // 正确，加分
+                cell.classList.add('correct');
+                gameParams.score += 10;
+                // 短暂高亮后刷新单词
+                setTimeout(() => {
+                    selectRandomWord();
+                    resetCellStyles();
+                }, 500);
+            } else {
+                // 错误，扣分
+                cell.classList.add('wrong');
+                gameParams.score = Math.max(0, gameParams.score - 5); // 分数不低于0
+                // 短暂高亮后重置样式
+                setTimeout(() => {
+                    cell.classList.remove('wrong');
+                }, 500);
+            }
+
+            // 更新分数显示
+            scoreElement.textContent = gameParams.score;
+
+            // 更新最高分
+            if (gameParams.score > gameParams.highScore) {
+                gameParams.highScore = gameParams.score;
+                localStorage.setItem('wordGameHighScore', gameParams.highScore);
+                highScoreElement.textContent = gameParams.highScore;
+            }
+        }
+
+        // 重置所有格子样式
+        function resetCellStyles() {
+            gameParams.gridCells.forEach(cell => {
+                cell.classList.remove('correct', 'wrong');
+            });
+        }
+
+        // 绘制背景
+        function drawBackground() {
+            if (gameParams.imagesLoaded) {
+                ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = '#87CEEB'; // 备用天蓝色背景
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        // 初始化游戏
+        function initGame() {
+            // 重置游戏状态
+            gameParams.score = 0;
+            gameParams.gameRunning = true;
+            scoreElement.textContent = 0;
+
+            // 创建3x3格子
+            createGrid();
+
+            // 选择第一个随机单词
+            selectRandomWord();
+
+            // 绘制背景
+            drawBackground();
+        }
+
+        // 重新开始游戏
+        restartBtn.addEventListener('click', () => {
+            initGame();
+        });
+
+        // 初始加载
+        if (!gameParams.imagesLoaded) {
+            // 立即绘制备用背景
+            drawBackground();
+            // 延迟初始化确保DOM加载完成
+            setTimeout(initGame, 500);
+        }
+    </script>
+</body>
+</html>
